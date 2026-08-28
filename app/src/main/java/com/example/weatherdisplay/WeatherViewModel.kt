@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.android.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.serialization.kotlinx.json.*
@@ -23,6 +24,13 @@ class WeatherViewModel : ViewModel() {
                 coerceInputValues = true
             })
         }
+        install(DefaultRequest) {
+            header("User-Agent", "WeatherDisplayApp/1.0")
+        }
+        install(HttpTimeout) {
+            requestTimeoutMillis = 15000
+            connectTimeoutMillis = 10000
+        }
     }
 
     var forecast by mutableStateOf<List<ForecastDay>>(emptyList())
@@ -34,8 +42,8 @@ class WeatherViewModel : ViewModel() {
     var longitude by mutableStateOf(0.0)
         private set
 
-    var radarTimestamps by mutableStateOf<List<Long>>(emptyList())
-        private set
+    // var radarTimestamps by mutableStateOf<List<Long>>(emptyList())
+    //    private set
 
     var isLoading by mutableStateOf(false)
         private set
@@ -43,37 +51,35 @@ class WeatherViewModel : ViewModel() {
     var errorMessage by mutableStateOf<String?>(null)
         private set
 
-    /**
-     * Starts a background loop to fetch weather data immediately and then every hour.
-     */
     fun startAutoRefresh(query: String) {
         viewModelScope.launch {
             while (true) {
                 fetchWeatherInternal(query)
-                // Refresh radar timestamps more frequently (every 10 mins)
-                fetchRadarTimestamps()
-                delay(3600_000) // Main refresh every hour
+                // fetchRadarTimestamps()
+                delay(3600_000) // 1 hour
             }
         }
         
-        // Also start a separate loop just for radar timestamps
+        /*
         viewModelScope.launch {
             while(true) {
                 delay(600_000) // 10 minutes
                 fetchRadarTimestamps()
             }
         }
+        */
     }
 
+    /*
     private suspend fun fetchRadarTimestamps() {
         try {
             val response: RainViewerResponse = client.get("https://api.rainviewer.com/public/weather-maps.json").body()
-            // Take the last 10 past frames for a good loop
             radarTimestamps = response.radar.past.takeLast(10).map { it.time }
         } catch (e: Exception) {
-            // Silently fail for background updates if we already have data
+            // Background update failed
         }
     }
+    */
 
     private suspend fun fetchWeatherInternal(query: String) {
         if (forecast.isEmpty()) {
@@ -82,23 +88,25 @@ class WeatherViewModel : ViewModel() {
         errorMessage = null
         
         try {
-            // 1. Geocoding
-            val geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=$query&count=1&language=en&format=json"
-            val geoResponse: GeocodingResponse = client.get(geoUrl).body()
+            val location = geocodeLocation(query)
             
-            val location = geoResponse.results?.firstOrNull()
             if (location == null) {
-                errorMessage = "Location not found"
+                errorMessage = "Location '$query' not found."
                 isLoading = false
                 return
             }
 
-            latitude = location.latitude
-            longitude = location.longitude
+            latitude = location.first
+            longitude = location.second
 
-            // 2. Weather: Using weather_code in the request
-            val weatherUrl = "https://api.open-meteo.com/v1/forecast?latitude=${location.latitude}&longitude=${location.longitude}&daily=weather_code,temperature_2m_max&temperature_unit=fahrenheit&timezone=auto"
-            val weatherResponse: WeatherResponse = client.get(weatherUrl).body()
+            val weatherUrl = "https://api.open-meteo.com/v1/forecast"
+            val weatherResponse: WeatherResponse = client.get(weatherUrl) {
+                parameter("latitude", latitude)
+                parameter("longitude", longitude)
+                parameter("daily", "weather_code,temperature_2m_max")
+                parameter("temperature_unit", "fahrenheit")
+                parameter("timezone", "auto")
+            }.body()
 
             forecast = weatherResponse.daily.time.take(5).mapIndexed { index, date ->
                 ForecastDay(
@@ -110,11 +118,40 @@ class WeatherViewModel : ViewModel() {
             }
         } catch (e: Exception) {
             if (forecast.isEmpty()) {
-                errorMessage = "Error: ${e.localizedMessage}"
+                errorMessage = "Network Error: Please check your internet connection."
             }
         } finally {
             isLoading = false
         }
+    }
+
+    private suspend fun geocodeLocation(query: String): Pair<Double, Double>? {
+        try {
+            val response: GeocodingResponse = client.get("https://geocoding-api.open-meteo.com/v1/search") {
+                parameter("name", query)
+                parameter("count", 1)
+                parameter("language", "en")
+                parameter("format", "json")
+            }.body()
+            
+            response.results?.firstOrNull()?.let {
+                return it.latitude to it.longitude
+            }
+        } catch (e: Exception) {}
+
+        try {
+            val response: List<Map<String, String>> = client.get("https://nominatim.openstreetmap.org/search") {
+                parameter("q", query)
+                parameter("format", "json")
+                parameter("limit", 1)
+            }.body()
+            
+            response.firstOrNull()?.let {
+                return it["lat"]!!.toDouble() to it["lon"]!!.toDouble()
+            }
+        } catch (e: Exception) {}
+        
+        return null
     }
 
     private fun getWeatherIcon(code: Int): String {

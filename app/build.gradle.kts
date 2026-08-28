@@ -1,4 +1,6 @@
 import java.net.URL
+import java.net.URLEncoder
+import java.net.HttpURLConnection
 import groovy.json.JsonSlurper
 
 plugins {
@@ -20,9 +22,13 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
-        // Pass the location to the app code via BuildConfig
-        val loc = project.findProperty("defaultLocation") ?: "90210"
+        val loc = project.findProperty("defaultLocation")?.toString() ?: "27605"
+        val lat = project.findProperty("defaultLat")?.toString() ?: "0.0"
+        val lon = project.findProperty("defaultLon")?.toString() ?: "0.0"
+        
         buildConfigField("String", "DEFAULT_LOCATION", "\"$loc\"")
+        buildConfigField("Double", "DEFAULT_LAT", lat)
+        buildConfigField("Double", "DEFAULT_LON", lon)
     }
 
     buildFeatures {
@@ -30,7 +36,6 @@ android {
         buildConfig = true
     }
 
-    // ... (rest of your android block remains the same)
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -61,48 +66,80 @@ dependencies {
     testImplementation(libs.junit)
 }
 
-// SETUP COMMAND: Run this task to download the map automatically
 tasks.register("setupMap") {
     group = "setup"
     description = "Downloads a static map image for the configured location."
 
     doLast {
-        val location = project.findProperty("defaultLocation") ?: "90210"
-        println("Setting up map for: $location")
+        val location = project.findProperty("defaultLocation")?.toString() ?: "27605"
+        var lat = project.findProperty("defaultLat")?.toString()?.toDoubleOrNull()
+        var lon = project.findProperty("defaultLon")?.toString()?.toDoubleOrNull()
 
-        // 1. Geocode the location using Open-Meteo
-        val geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=$location&count=1&language=en&format=json"
-        val geoJson = URL(geoUrl).readText()
-        val geoData = JsonSlurper().parseText(geoJson) as Map<*, *>
-        val results = geoData["results"] as? List<*>
-        
-        if (results == null || results.isEmpty()) {
-            throw GradleException("Could not find coordinates for $location")
+        if (lat == null || lon == null) {
+            println("Geocoding location: $location...")
+            val encodedLocation = URLEncoder.encode(location, "UTF-8")
+            
+            // Try Open-Meteo first, then Nominatim as fallback
+            val providers = listOf(
+                "https://geocoding-api.open-meteo.com/v1/search?name=$encodedLocation&count=1&format=json",
+                "https://nominatim.openstreetmap.org/search?q=$encodedLocation&format=json&limit=1"
+            )
+
+            for (url in providers) {
+                try {
+                    println("Attempting geocoding with: $url")
+                    val conn = URL(url).openConnection() as HttpURLConnection
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (WeatherDisplayApp)")
+                    conn.connectTimeout = 5000
+                    conn.readTimeout = 5000
+
+                    val json = conn.inputStream.bufferedReader().use { it.readText() }
+                    val data = JsonSlurper().parseText(json)
+                    
+                    if (url.contains("open-meteo")) {
+                        val res = (data as Map<*, *>)["results"] as? List<*>
+                        if (res != null && res.isNotEmpty()) {
+                            val first = res[0] as Map<*, *>
+                            lat = (first["latitude"] as Number).toDouble()
+                            lon = (first["longitude"] as Number).toDouble()
+                            break
+                        }
+                    } else {
+                        val res = data as List<*>
+                        if (res.isNotEmpty()) {
+                            val first = res[0] as Map<*, *>
+                            lat = (first["lat"] as String).toDouble()
+                            lon = (first["lon"] as String).toDouble()
+                            break
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("Provider failed: ${e.message}")
+                }
+            }
         }
 
-        val firstResult = results[0] as Map<*, *>
-        val lat = firstResult["latitude"]
-        val lon = firstResult["longitude"]
-        println("Found coordinates: $lat, $lon")
+        if (lat == null || lon == null) {
+            throw GradleException("Could not find coordinates. Please set 'defaultLat' and 'defaultLon' manually in gradle.properties.")
+        }
 
-        // 2. Download a high-res static map from CartoDB (Zoom level 10)
-        // We'll use a tile-based approach to get a single image centered on the point
-        // For a simple setup, we'll download a 1200x800 static image from a free provider
+        println("Coordinates: $lat, $lon")
         val mapUrl = "https://static-maps.yandex.ru/1.x/?ll=$lon,$lat&z=10&l=map&size=600,450&scale=2"
         val outputFile = file("src/main/res/drawable/base_map.png")
         
-        println("Downloading map from $mapUrl...")
-        outputFile.parentFile.mkdirs()
-        URL(mapUrl).openStream().use { input ->
-            outputFile.outputStream().use { output ->
-                input.copyTo(output)
+        try {
+            val conn = URL(mapUrl).openConnection() as HttpURLConnection
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            conn.inputStream.use { input ->
+                outputFile.parentFile.mkdirs()
+                outputFile.outputStream().use { output -> input.copyTo(output) }
             }
+            file("src/main/res/drawable/base_map.xml").delete()
+            println("Success! Map saved to ${outputFile.absolutePath}")
+        } catch (e: Exception) {
+            println("Automated download failed. Please download the map manually:")
+            println("URL: $mapUrl")
+            println("Save as: src/main/res/drawable/base_map.png")
         }
-        
-        // Remove the old XML placeholder if it exists
-        val oldXml = file("src/main/res/drawable/base_map.xml")
-        if (oldXml.exists()) oldXml.delete()
-
-        println("Success! Map saved to ${outputFile.absolutePath}")
     }
 }

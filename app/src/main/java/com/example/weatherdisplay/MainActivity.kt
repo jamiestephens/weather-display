@@ -19,7 +19,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
+// import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import java.time.format.DateTimeFormatter
 
@@ -49,7 +49,7 @@ fun WeatherSlideshow() {
 
     val screens = listOf<@Composable () -> Unit>(
         { ScreenOne(viewModel) },
-        { RadarScreen(viewModel) }
+        // { RadarScreen(viewModel) } // Commented out for now
     )
     var currentIndex by remember { mutableIntStateOf(0) }
 
@@ -127,6 +127,7 @@ fun ForecastScreen(forecast: List<ForecastDay>) {
     }
 }
 
+/*
 @Composable
 fun RadarScreen(viewModel: WeatherViewModel) {
     val lat = viewModel.latitude
@@ -184,6 +185,7 @@ fun RadarScreen(viewModel: WeatherViewModel) {
         }
     }
 }
+*/
 
 fun formatDay(dateStr: String): String {
     return try {
