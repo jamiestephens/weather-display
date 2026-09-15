@@ -22,5 +22,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "WeatherDisplay"
+rootProject.name = "SlideshowDisplay"
 include(":app")
+ 
