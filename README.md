@@ -9,7 +9,7 @@ A weather dashboard and slideshow application designed specifically for always-o
 - **Interactive Device-Level Configuration**: Prompts the user for their 5-digit zip code on the first application launch. The location configuration securely updates and saves on device storage.
 - **Boot and Wake Persistence**: Configured to stay awake via automated display flags and immediately resume operation upon power-cycling the device hardware.
 
-<img width="738" height="459" alt="slideshowapp" src="https://github.com/user-attachments/assets/a34917de-46cf-4f2b-8036-eeefbd1f87f1" />
+<img width="738" height="459" alt="slideshow_app" src="https://github.com/user-attachments/assets/4f2f45e8-196f-4bfa-b857-b894327fdddd" />
 
 
 
